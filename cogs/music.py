@@ -351,7 +351,7 @@ class Music(commands.Cog):
             return f"{hours:02d}:{mins:02d}:{secs:02d}"
         return f"{mins:02d}:{secs:02d}"
 
-    @commands.hybrid_command(name="유튜브", aliases=["play", "p", "ㅇ", "재생", "노래"], description="유튜브 검색 및 재생을 수행합니다.")
+    @commands.hybrid_command(name="유튜브", aliases=["play", "p"], description="유튜브 검색 및 재생을 수행합니다.")
     async def play(self, ctx, *, search: str):
         if not ctx.author.voice:
             return await ctx.send("❌ 먼저 음성 채널에 접속해 주세요!")
