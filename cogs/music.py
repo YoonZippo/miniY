@@ -2,7 +2,10 @@ import discord
 import asyncio
 import yt_dlp
 import logging
-from discord.ext import commands
+import time
+import aiohttp
+import re
+from discord.ext import commands, tasks
 
 logger = logging.getLogger('musicBot.music')
 
@@ -91,14 +94,19 @@ class MusicPlayerView(discord.ui.View):
     @discord.ui.button(label="⏯️ 재생/일시정지", style=discord.ButtonStyle.primary)
     async def toggle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         vc = interaction.guild.voice_client
+        guild_id = interaction.guild_id
         if not vc:
             return await interaction.response.send_message("음성 채널에 있지 않습니다.", ephemeral=True)
             
         if vc.is_playing():
             vc.pause()
+            self.cog.pause_times[guild_id] = time.time()
             await interaction.response.send_message("⏸️ 일시정지되었습니다.", ephemeral=True)
         elif vc.is_paused():
             vc.resume()
+            if self.cog.pause_times.get(guild_id):
+                self.cog.pause_durations[guild_id] += time.time() - self.cog.pause_times[guild_id]
+                self.cog.pause_times[guild_id] = 0
             await interaction.response.send_message("▶️ 재생을 재개합니다.", ephemeral=True)
         else:
             await interaction.response.send_message("재생 중인 곡이 없습니다.", ephemeral=True)
@@ -138,6 +146,129 @@ class Music(commands.Cog):
         self.current_song = {} # guild_id: song
         self.is_playing = {}
         self.last_controller_msg = {} # guild_id: discord.Message
+        
+        self.start_times = {} # guild_id: start_time (float)
+        self.pause_times = {} # guild_id: pause_time (float)
+        self.pause_durations = {} # guild_id: total_pause_duration (float)
+        self.subtitles = {} # guild_id: list of subtitle dicts
+
+        self.update_controller.start()
+
+    def cog_unload(self):
+        self.update_controller.cancel()
+
+    @tasks.loop(seconds=5)
+    async def update_controller(self):
+        for guild_id, msg in list(self.last_controller_msg.items()):
+            if not self.is_playing.get(guild_id):
+                continue
+                
+            vc = msg.guild.voice_client if msg.guild else None
+            # If paused, we still want to show progress, but we don't update time
+            if not vc or (not vc.is_playing() and not vc.is_paused()):
+                continue
+                
+            song = self.current_song.get(guild_id)
+            if not song:
+                continue
+                
+            start_time = self.start_times.get(guild_id, 0)
+            pause_duration = self.pause_durations.get(guild_id, 0)
+            if self.pause_times.get(guild_id):
+                elapsed = self.pause_times[guild_id] - start_time - pause_duration
+            else:
+                elapsed = time.time() - start_time - pause_duration
+                
+            duration = song.get('duration', 0)
+            if duration > 0:
+                progress = int((elapsed / duration) * 15)
+                progress = max(0, min(15, progress))
+                bar = "▬" * progress + "🔘" + "▬" * (15 - progress)
+                time_str = f"{self.format_duration(elapsed)} / {self.format_duration(duration)}"
+            else:
+                bar = "🔘▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+                time_str = f"{self.format_duration(elapsed)}"
+                
+            current_sub = ""
+            subs = self.subtitles.get(guild_id, [])
+            for sub in subs:
+                if sub['start'] <= elapsed <= sub['end']:
+                    current_sub = sub['text']
+                    break
+                    
+            if not msg.embeds:
+                continue
+            embed = msg.embeds[0]
+            
+            # Find and update progress field
+            found = False
+            for i, field in enumerate(embed.fields):
+                if field.name == "재생 진행도":
+                    embed.set_field_at(i, name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
+                    found = True
+                    break
+            if not found:
+                embed.add_field(name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
+                
+            if current_sub:
+                embed.description = f"[{song['title']}]({song.get('webpage_url', '')})\n\n💬 **자막:** {current_sub}"
+            else:
+                embed.description = f"[{song['title']}]({song.get('webpage_url', '')})"
+                
+            try:
+                await msg.edit(embed=embed)
+            except discord.NotFound:
+                # 메시지가 삭제된 경우 추적에서 제외
+                self.last_controller_msg.pop(guild_id, None)
+            except Exception as e:
+                pass
+                
+    async def fetch_and_parse_vtt(self, url):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    text = await resp.text()
+                    
+            subs = []
+            blocks = text.split('\n\n')
+            for block in blocks:
+                lines = block.strip().split('\n')
+                if not lines: continue
+                
+                time_idx = -1
+                for i, line in enumerate(lines):
+                    if '-->' in line:
+                        time_idx = i
+                        break
+                        
+                if time_idx == -1: continue
+                
+                time_line = lines[time_idx]
+                text_lines = lines[time_idx+1:]
+                
+                def parse_time(time_str):
+                    parts = time_str.split(':')
+                    if len(parts) == 3:
+                        h, m, s = parts
+                    elif len(parts) == 2:
+                        h = 0; m, s = parts
+                    else:
+                        h = 0; m = 0; s = parts[0]
+                    return int(h) * 3600 + int(m) * 60 + float(s)
+                    
+                times = time_line.split('-->')
+                if len(times) == 2:
+                    start = parse_time(times[0].strip())
+                    end = parse_time(times[1].strip())
+                    text = re.sub(r'<[^>]+>', '', ' '.join(text_lines))
+                    text = re.sub(r'<\d{2}:\d{2}:\d{2}\.\d{3}>', '', text)
+                    text = text.replace('&nbsp;', ' ').strip()
+                    if text:
+                        subs.append({'start': start, 'end': end, 'text': text})
+            return subs
+        except Exception as e:
+            logger.error(f"Subtitle parse error: {e}")
+            return []
 
     async def check_queue(self, ctx):
         guild_id = ctx.guild.id
@@ -161,6 +292,13 @@ class Music(commands.Cog):
                 self.history[guild_id].pop(0)
 
         self.current_song[guild_id] = song
+        self.start_times[guild_id] = time.time()
+        self.pause_times[guild_id] = 0
+        self.pause_durations[guild_id] = 0
+        self.subtitles[guild_id] = []
+        
+        if song.get('sub_url'):
+            self.subtitles[guild_id] = await self.fetch_and_parse_vtt(song['sub_url'])
         
         vc = ctx.voice_client
         if not vc:
@@ -213,7 +351,7 @@ class Music(commands.Cog):
             return f"{hours:02d}:{mins:02d}:{secs:02d}"
         return f"{mins:02d}:{secs:02d}"
 
-    @commands.hybrid_command(name="유튜브", aliases=["play", "p"], description="유튜브 검색 및 재생을 수행합니다.")
+    @commands.hybrid_command(name="유튜브", aliases=["play", "p", "ㅇ", "재생", "노래"], description="유튜브 검색 및 재생을 수행합니다.")
     async def play(self, ctx, *, search: str):
         if not ctx.author.voice:
             return await ctx.send("❌ 먼저 음성 채널에 접속해 주세요!")
@@ -250,13 +388,41 @@ class Music(commands.Cog):
                     except Exception as e:
                         return await ctx.send(f"❌ 검색 중 오류가 발생했습니다: {e}")
 
+    @commands.hybrid_command(name="ㅇ", description="유튜브 검색 및 재생을 수행합니다.")
+    async def play_alias_1(self, ctx, *, search: str): await self.play(ctx, search=search)
+
+    @commands.hybrid_command(name="재생", description="유튜브 검색 및 재생을 수행합니다.")
+    async def play_alias_2(self, ctx, *, search: str): await self.play(ctx, search=search)
+
+    @commands.hybrid_command(name="노래", description="유튜브 검색 및 재생을 수행합니다.")
+    async def play_alias_3(self, ctx, *, search: str): await self.play(ctx, search=search)
+
     def parse_song_info(self, info):
+        sub_url = None
+        subs = info.get('subtitles', {})
+        auto_subs = info.get('automatic_captions', {})
+        
+        for lang in ['ko', 'en']:
+            if lang in subs:
+                for fmt in subs[lang]:
+                    if fmt.get('ext') == 'vtt':
+                        sub_url = fmt.get('url')
+                        break
+                if sub_url: break
+            if lang in auto_subs:
+                for fmt in auto_subs[lang]:
+                    if fmt.get('ext') == 'vtt':
+                        sub_url = fmt.get('url')
+                        break
+                if sub_url: break
+
         return {
             'url': info['url'],
             'title': info['title'],
             'thumbnail': info.get('thumbnail'),
             'duration': info.get('duration'),
-            'webpage_url': info.get('webpage_url')
+            'webpage_url': info.get('webpage_url'),
+            'sub_url': sub_url
         }
 
     async def add_to_queue_or_play(self, ctx, song):

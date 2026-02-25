@@ -36,7 +36,7 @@ TOKEN = os.getenv('MUSIC_BOT_TOKEN') # 기존 봇과 다른 토큰 사용
 # 봇 설정
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='/', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 @bot.event
 async def setup_hook():
