@@ -262,13 +262,19 @@ class Music(commands.Cog):
                     
                 times = time_line.split('-->')
                 if len(times) == 2:
-                    start = parse_time(times[0].strip())
-                    end = parse_time(times[1].strip())
-                    text = re.sub(r'<[^>]+>', '', ' '.join(text_lines))
-                    text = re.sub(r'<\d{2}:\d{2}:\d{2}\.\d{3}>', '', text)
-                    text = text.replace('&nbsp;', ' ').strip()
-                    if text:
-                        subs.append({'start': start, 'end': end, 'text': text})
+                    start_match = re.search(r'(\d+:\d{2}:\d{2}[\.,]\d+|\d{2}:\d{2}[\.,]\d+)', times[0])
+                    end_match = re.search(r'(\d+:\d{2}:\d{2}[\.,]\d+|\d{2}:\d{2}[\.,]\d+)', times[1])
+                    
+                    if start_match and end_match:
+                        start_str = start_match.group(1).replace(',', '.')
+                        end_str = end_match.group(1).replace(',', '.')
+                        start = parse_time(start_str)
+                        end = parse_time(end_str)
+                        
+                        sub_text = re.sub(r'<[^>]+>', '', ' '.join(text_lines))
+                        sub_text = sub_text.replace('&nbsp;', ' ').strip()
+                        if sub_text:
+                            subs.append({'start': start, 'end': end, 'text': sub_text})
             return subs
         except Exception as e:
             logger.error(f"Subtitle parse error: {e}")
