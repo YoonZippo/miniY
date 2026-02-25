@@ -367,6 +367,7 @@ class Music(commands.Cog):
 
     def format_duration(self, seconds):
         if not seconds: return "알 수 없음"
+        seconds = int(seconds)
         mins, secs = divmod(seconds, 60)
         hours, mins = divmod(mins, 60)
         if hours > 0:
