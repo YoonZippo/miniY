@@ -25,6 +25,39 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
+class MusicSearchView(discord.ui.View):
+    """유튜브 검색 결과를 보여주고 선택할 수 있는 뷰"""
+    def __init__(self, cog, ctx, results):
+        super().__init__(timeout=30)
+        self.cog = cog
+        self.ctx = ctx
+        self.results = results
+        self.selection = None
+
+        # 버튼 생성 (1~len(results))
+        for i in range(len(results)):
+            button = discord.ui.Button(label=str(i+1), style=discord.ButtonStyle.secondary, custom_id=str(i))
+            button.callback = self.make_callback(i)
+            self.add_item(button)
+
+    def make_callback(self, index):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user != self.ctx.author:
+                return await interaction.response.send_message("❌ 검색한 사람만 선택할 수 있습니다.", ephemeral=True)
+            
+            self.selection = self.results[index]
+            self.stop()
+            await interaction.response.defer()
+            await interaction.delete_original_response()
+            await self.cog.add_to_queue_or_play(self.ctx, self.selection)
+        return callback
+
+    async def on_timeout(self):
+        try:
+            await self.ctx.send("🕒 선택 시간이 초과되었습니다.", delete_after=5)
+        except:
+            pass
+
 class MusicPlayerView(discord.ui.View):
     """음악 컨트롤 버튼이 포함된 뷰"""
     def __init__(self, cog, ctx):
@@ -104,6 +137,7 @@ class Music(commands.Cog):
         self.history = {} # guild_id: [played_songs]
         self.current_song = {} # guild_id: song
         self.is_playing = {}
+        self.last_controller_msg = {} # guild_id: discord.Message
 
     async def check_queue(self, ctx):
         guild_id = ctx.guild.id
@@ -144,6 +178,18 @@ class Music(commands.Cog):
 
         vc.play(source, after=after_playing)
         
+        await self.send_controller_message(ctx, song)
+
+    async def send_controller_message(self, ctx, song):
+        guild_id = ctx.guild.id
+        
+        # 이전 컨트롤러 메시지 삭제 시도 (선택 사항: 메시지 폭주 방지)
+        if guild_id in self.last_controller_msg:
+            try:
+                await self.last_controller_msg[guild_id].delete()
+            except:
+                pass
+
         # 플레이어 Embed 생성
         embed = discord.Embed(
             title="🎵 지금 재생 중",
@@ -156,7 +202,8 @@ class Music(commands.Cog):
         embed.add_field(name="재생 시간", value=self.format_duration(song.get('duration', 0)), inline=True)
         embed.add_field(name="신청자", value=ctx.author.display_name, inline=True)
         
-        await ctx.send(embed=embed, view=MusicPlayerView(self, ctx))
+        msg = await ctx.send(embed=embed, view=MusicPlayerView(self, ctx))
+        self.last_controller_msg[guild_id] = msg
 
     def format_duration(self, seconds):
         if not seconds: return "알 수 없음"
@@ -172,28 +219,60 @@ class Music(commands.Cog):
             return await ctx.send("❌ 먼저 음성 채널에 접속해 주세요!")
 
         async with ctx.typing():
-            with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                try:
-                    info = ydl.extract_info(f"ytsearch:{search}", download=False)['entries'][0]
-                    song = {
-                        'url': info['url'],
-                        'title': info['title'],
-                        'thumbnail': info.get('thumbnail'),
-                        'duration': info.get('duration'),
-                        'webpage_url': info.get('webpage_url')
-                    }
-                except Exception as e:
-                    return await ctx.send(f"❌ 검색 중 오류가 발생했습니다: {e}")
-
-            guild_id = ctx.guild.id
-            if guild_id not in self.queue:
-                self.queue[guild_id] = []
-            
-            if self.is_playing.get(guild_id):
-                self.queue[guild_id].append(song)
-                await ctx.send(f"📂 **대기열 추가:** {song['title']}")
+            # URL인지 검색어인지 확인
+            if search.startswith("http"):
+                with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+                    try:
+                        info = ydl.extract_info(search, download=False)
+                        if 'entries' in info: # 플레이리스트인 경우
+                            info = info['entries'][0]
+                        song = self.parse_song_info(info)
+                        await self.add_to_queue_or_play(ctx, song)
+                    except Exception as e:
+                        return await ctx.send(f"❌ 오류가 발생했습니다: {e}")
             else:
-                await self.play_music(ctx, song)
+                # 최대 9개 검색 결과 추출
+                search_options = YDL_OPTIONS.copy()
+                search_options['noplaylist'] = True
+                with yt_dlp.YoutubeDL(search_options) as ydl:
+                    try:
+                        entries = ydl.extract_info(f"ytsearch9:{search}", download=False)['entries']
+                        if not entries:
+                            return await ctx.send("🔍 검색 결과가 없습니다.")
+                        
+                        results = [self.parse_song_info(e) for e in entries]
+                        
+                        embed = discord.Embed(title=f"🔍 '{search}' 검색 결과", description="재생할 곡의 번호를 버튼으로 선택해 주세요.", color=discord.Color.blue())
+                        for i, res in enumerate(results, 1):
+                            embed.add_field(name=f"{i}. {res['title']}", value=f"시간: {self.format_duration(res['duration'])}", inline=False)
+                        
+                        await ctx.send(embed=embed, view=MusicSearchView(self, ctx, results))
+                    except Exception as e:
+                        return await ctx.send(f"❌ 검색 중 오류가 발생했습니다: {e}")
+
+    def parse_song_info(self, info):
+        return {
+            'url': info['url'],
+            'title': info['title'],
+            'thumbnail': info.get('thumbnail'),
+            'duration': info.get('duration'),
+            'webpage_url': info.get('webpage_url')
+        }
+
+    async def add_to_queue_or_play(self, ctx, song):
+        guild_id = ctx.guild.id
+        if guild_id not in self.queue:
+            self.queue[guild_id] = []
+        
+        if self.is_playing.get(guild_id):
+            self.queue[guild_id].append(song)
+            # 대기열 추가 시 메시지를 보내는 대신, 현재 재생 중인 컨트롤러를 아래로 다시 출력
+            if guild_id in self.current_song:
+                await self.send_controller_message(ctx, self.current_song[guild_id])
+                # 알림용 임시 메시지
+                await ctx.send(f"📂 **대기열 추가:** {song['title']}", delete_after=5)
+        else:
+            await self.play_music(ctx, song)
 
     @commands.hybrid_command(name="건너뛰기", aliases=["skip", "s"], description="현재 재생 중인 곡을 건너뜁니다.")
     async def skip(self, ctx):
