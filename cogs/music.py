@@ -149,6 +149,7 @@ class Music(commands.Cog):
         self.current_song = {} # guild_id: song
         self.is_playing = {}
         self.last_controller_msg = {} # guild_id: discord.Message
+        self.last_progress_msg = {} # guild_id: discord.Message
         
         self.start_times = {} # guild_id: start_time (float)
         self.pause_times = {} # guild_id: pause_time (float)
@@ -163,7 +164,7 @@ class Music(commands.Cog):
     @tasks.loop(seconds=3)
     async def update_controller(self):
         try:
-            for guild_id, msg in list(self.last_controller_msg.items()):
+            for guild_id, prog_msg in list(self.last_progress_msg.items()):
                 if not self.is_playing.get(guild_id):
                     continue
                     
@@ -203,30 +204,23 @@ class Music(commands.Cog):
                         current_sub = sub['text']
                         break
                         
-                if not msg.embeds:
+                if not prog_msg.embeds:
                     continue
-                embed = msg.embeds[0].copy()
+                embed = prog_msg.embeds[0].copy()
                 
-                # Find and update progress field
-                found = False
-                for i, field in enumerate(embed.fields):
-                    if field.name == "재생 진행도":
-                        embed.set_field_at(i, name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
-                        found = True
-                        break
-                if not found:
-                    embed.add_field(name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
-                    
+                # Update progress field (it should be the first field)
+                embed.set_field_at(0, name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
+                
                 if current_sub:
-                    embed.description = f"[{song['title']}]({song.get('webpage_url', '')})\n\n💬 **자막:** {current_sub}"
+                    embed.description = f"💬 **자막:**\n{current_sub}"
                 else:
-                    embed.description = f"[{song['title']}]({song.get('webpage_url', '')})"
+                    embed.description = ""
                     
                 try:
-                    await msg.edit(embed=embed)
+                    await prog_msg.edit(embed=embed)
                 except discord.NotFound:
                     # 메시지가 삭제된 경우 추적에서 제외
-                    self.last_controller_msg.pop(guild_id, None)
+                    self.last_progress_msg.pop(guild_id, None)
                 except Exception as e:
                     logger.error(f"Message edit error: {e}")
                     pass
@@ -343,6 +337,12 @@ class Music(commands.Cog):
                 await self.last_controller_msg[guild_id].delete()
             except:
                 pass
+                
+        if guild_id in self.last_progress_msg:
+            try:
+                await self.last_progress_msg[guild_id].delete()
+            except:
+                pass
 
         # 플레이어 Embed 생성
         embed = discord.Embed(
@@ -354,10 +354,16 @@ class Music(commands.Cog):
             embed.set_image(url=song['thumbnail'])
             
         embed.add_field(name="재생 시간", value=self.format_duration(song.get('duration', 0)), inline=True)
-        embed.add_field(name="신청자", value=ctx.author.display_name, inline=True)
+        embed.add_field(name="신청자", value=ctx.author.display_name if hasattr(ctx.author, 'display_name') else "알 수 없음", inline=True)
         
         msg = await ctx.send(embed=embed, view=MusicPlayerView(self, ctx))
         self.last_controller_msg[guild_id] = msg
+        
+        # 진행도 및 자막 전용 Embed 생성
+        prog_embed = discord.Embed(color=discord.Color.blue())
+        prog_embed.add_field(name="재생 진행도", value="`🔘▬▬▬▬▬▬▬▬▬▬▬▬▬▬`\n⏳ 00:00 / 00:00", inline=False)
+        prog_msg = await ctx.send(embed=prog_embed)
+        self.last_progress_msg[guild_id] = prog_msg
 
     def format_duration(self, seconds):
         if not seconds: return "알 수 없음"
