@@ -22,7 +22,7 @@ YDL_OPTIONS = {
     'source_address': '0.0.0.0',
     'writesubtitles': True,
     'writeautomaticsub': True,
-    'subtitleslangs': ['ko', 'en']
+    'subtitleslangs': ['ko', 'en', 'ja']
 }
 
 # FFmpeg 옵션 설정
@@ -425,7 +425,7 @@ class Music(commands.Cog):
         subs = info.get('subtitles', {})
         auto_subs = info.get('automatic_captions', {})
         
-        for lang in ['ko', 'en']:
+        for lang in ['ko', 'en', 'ja']:
             if lang in subs:
                 for fmt in subs[lang]:
                     if fmt.get('ext') == 'vtt':
