@@ -162,70 +162,76 @@ class Music(commands.Cog):
 
     @tasks.loop(seconds=3)
     async def update_controller(self):
-        for guild_id, msg in list(self.last_controller_msg.items()):
-            if not self.is_playing.get(guild_id):
-                continue
-                
-            vc = msg.guild.voice_client if msg.guild else None
-            # If paused, we still want to show progress, but we don't update time
-            if not vc or (not vc.is_playing() and not vc.is_paused()):
-                continue
-                
-            song = self.current_song.get(guild_id)
-            if not song:
-                continue
-                
-            start_time = self.start_times.get(guild_id, 0)
-            pause_duration = self.pause_durations.get(guild_id, 0)
-            if self.pause_times.get(guild_id):
-                elapsed = self.pause_times[guild_id] - start_time - pause_duration
-            else:
-                elapsed = time.time() - start_time - pause_duration
-                
-            duration = song.get('duration', 0)
-            if duration > 0:
-                progress = int((elapsed / duration) * 15)
-                progress = max(0, min(15, progress))
-                bar = "▬" * progress + "🔘" + "▬" * (15 - progress)
-                time_str = f"{self.format_duration(elapsed)} / {self.format_duration(duration)}"
-            else:
-                bar = "🔘▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
-                time_str = f"{self.format_duration(elapsed)}"
-                
-            current_sub = ""
-            subs = self.subtitles.get(guild_id, [])
-            for sub in subs:
-                # 여유 범위를 주어 컨트롤러 업데이트 주기 시점에 짧은 자막이 누락되지 않도록 보완
-                if sub['start'] - 1.0 <= elapsed <= sub['end'] + 2.0:
-                    current_sub = sub['text']
-                    break
+        try:
+            for guild_id, msg in list(self.last_controller_msg.items()):
+                if not self.is_playing.get(guild_id):
+                    continue
                     
-            if not msg.embeds:
-                continue
-            embed = msg.embeds[0]
-            
-            # Find and update progress field
-            found = False
-            for i, field in enumerate(embed.fields):
-                if field.name == "재생 진행도":
-                    embed.set_field_at(i, name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
-                    found = True
-                    break
-            if not found:
-                embed.add_field(name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
+                guild = self.bot.get_guild(guild_id)
+                vc = guild.voice_client if guild else None
+                # If paused, we still want to show progress, but we don't update time
+                if not vc or (not vc.is_playing() and not vc.is_paused()):
+                    continue
+                    
+                song = self.current_song.get(guild_id)
+                if not song:
+                    continue
+                    
+                start_time = self.start_times.get(guild_id, 0)
+                pause_duration = self.pause_durations.get(guild_id, 0)
+                if self.pause_times.get(guild_id):
+                    elapsed = self.pause_times[guild_id] - start_time - pause_duration
+                else:
+                    elapsed = time.time() - start_time - pause_duration
+                    
+                duration = song.get('duration')
+                if duration and int(duration) > 0:
+                    duration_int = int(duration)
+                    progress = int((elapsed / duration_int) * 15)
+                    progress = max(0, min(15, progress))
+                    bar = "▬" * progress + "🔘" + "▬" * (15 - progress)
+                    time_str = f"{self.format_duration(elapsed)} / {self.format_duration(duration_int)}"
+                else:
+                    bar = "🔘▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
+                    time_str = f"{self.format_duration(elapsed)}"
+                    
+                current_sub = ""
+                subs = self.subtitles.get(guild_id, [])
+                for sub in subs:
+                    # 여유 범위를 주어 컨트롤러 업데이트 주기 시점에 짧은 자막이 누락되지 않도록 보완
+                    if sub['start'] - 1.0 <= elapsed <= sub['end'] + 2.0:
+                        current_sub = sub['text']
+                        break
+                        
+                if not msg.embeds:
+                    continue
+                embed = msg.embeds[0].copy()
                 
-            if current_sub:
-                embed.description = f"[{song['title']}]({song.get('webpage_url', '')})\n\n💬 **자막:** {current_sub}"
-            else:
-                embed.description = f"[{song['title']}]({song.get('webpage_url', '')})"
-                
-            try:
-                await msg.edit(embed=embed)
-            except discord.NotFound:
-                # 메시지가 삭제된 경우 추적에서 제외
-                self.last_controller_msg.pop(guild_id, None)
-            except Exception as e:
-                pass
+                # Find and update progress field
+                found = False
+                for i, field in enumerate(embed.fields):
+                    if field.name == "재생 진행도":
+                        embed.set_field_at(i, name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
+                        found = True
+                        break
+                if not found:
+                    embed.add_field(name="재생 진행도", value=f"`{bar}`\n⏳ {time_str}", inline=False)
+                    
+                if current_sub:
+                    embed.description = f"[{song['title']}]({song.get('webpage_url', '')})\n\n💬 **자막:** {current_sub}"
+                else:
+                    embed.description = f"[{song['title']}]({song.get('webpage_url', '')})"
+                    
+                try:
+                    await msg.edit(embed=embed)
+                except discord.NotFound:
+                    # 메시지가 삭제된 경우 추적에서 제외
+                    self.last_controller_msg.pop(guild_id, None)
+                except Exception as e:
+                    logger.error(f"Message edit error: {e}")
+                    pass
+        except Exception as e:
+            logger.error(f"update_controller total error: {e}")
                 
     async def fetch_and_parse_vtt(self, url):
         try:
