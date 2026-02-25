@@ -161,7 +161,7 @@ class Music(commands.Cog):
     def cog_unload(self):
         self.update_controller.cancel()
 
-    @tasks.loop(seconds=3)
+    @tasks.loop(seconds=2)
     async def update_controller(self):
         try:
             for guild_id, prog_msg in list(self.last_progress_msg.items()):
@@ -199,9 +199,10 @@ class Music(commands.Cog):
                 current_sub = ""
                 subs = self.subtitles.get(guild_id, [])
                 for sub in subs:
-                    # 여유 범위를 주어 컨트롤러 업데이트 주기 시점에 짧은 자막이 누락되지 않도록 보완
-                    if sub['start'] - 1.0 <= elapsed <= sub['end'] + 2.0:
+                    # 시작 시간이 도달한 자막 중 가장 마지막 것을 계속 표시함(음악만 나오는 구간 등에서도 화면에 유지)
+                    if sub['start'] - 1.0 <= elapsed:
                         current_sub = sub['text']
+                    else:
                         break
                         
                 if not prog_msg.embeds:
@@ -227,58 +228,34 @@ class Music(commands.Cog):
         except Exception as e:
             logger.error(f"update_controller total error: {e}")
                 
-    async def fetch_and_parse_vtt(self, url):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    text = await resp.text()
-                    
-            subs = []
-            blocks = text.split('\n\n')
-            for block in blocks:
-                lines = block.strip().split('\n')
-                if not lines: continue
+    async def fetch_and_parse_vtt(self, video_id):
+        def _fetch():
+            try:
+                from youtube_transcript_api import YouTubeTranscriptApi
+                yt_api = YouTubeTranscriptApi()
+                t_list = yt_api.list(video_id)
+                try:
+                    t = t_list.find_transcript(['ko', 'en', 'ja'])
+                except:
+                    return []
+                snippets = t.fetch()
+                subs = []
+                for s in snippets:
+                    # HTML 엔티티/기본 태그 제거
+                    text = re.sub(r'<[^>]+>', '', s.text)
+                    text = text.replace('&nbsp;', ' ').strip()
+                    if text:
+                        subs.append({
+                            'start': s.start,
+                            'end': s.start + s.duration,
+                            'text': text
+                        })
+                return subs
+            except Exception as e:
+                logger.error(f"Transcript API error: {e}")
+                return []
                 
-                time_idx = -1
-                for i, line in enumerate(lines):
-                    if '-->' in line:
-                        time_idx = i
-                        break
-                        
-                if time_idx == -1: continue
-                
-                time_line = lines[time_idx]
-                text_lines = lines[time_idx+1:]
-                
-                def parse_time(time_str):
-                    parts = time_str.split(':')
-                    if len(parts) == 3:
-                        h, m, s = parts
-                    elif len(parts) == 2:
-                        h = 0; m, s = parts
-                    else:
-                        h = 0; m = 0; s = parts[0]
-                    return int(h) * 3600 + int(m) * 60 + float(s)
-                    
-                times = time_line.split('-->')
-                if len(times) == 2:
-                    start_match = re.search(r'(\d+:\d{2}:\d{2}[\.,]\d+|\d{2}:\d{2}[\.,]\d+)', times[0])
-                    end_match = re.search(r'(\d+:\d{2}:\d{2}[\.,]\d+|\d{2}:\d{2}[\.,]\d+)', times[1])
-                    
-                    if start_match and end_match:
-                        start_str = start_match.group(1).replace(',', '.')
-                        end_str = end_match.group(1).replace(',', '.')
-                        start = parse_time(start_str)
-                        end = parse_time(end_str)
-                        
-                        sub_text = re.sub(r'<[^>]+>', '', ' '.join(text_lines))
-                        sub_text = sub_text.replace('&nbsp;', ' ').strip()
-                        if sub_text:
-                            subs.append({'start': start, 'end': end, 'text': sub_text})
-            return subs
-        except Exception as e:
-            logger.error(f"Subtitle parse error: {e}")
-            return []
+        return await asyncio.to_thread(_fetch)
 
     async def check_queue(self, ctx):
         guild_id = ctx.guild.id
@@ -307,8 +284,8 @@ class Music(commands.Cog):
         self.pause_durations[guild_id] = 0
         self.subtitles[guild_id] = []
         
-        if song.get('sub_url'):
-            self.subtitles[guild_id] = await self.fetch_and_parse_vtt(song['sub_url'])
+        if song.get('id'):
+            self.subtitles[guild_id] = await self.fetch_and_parse_vtt(song['id'])
         
         vc = ctx.voice_client
         if not vc:
@@ -421,31 +398,13 @@ class Music(commands.Cog):
     async def play_alias_3(self, ctx, *, search: str): await self.play(ctx, search=search)
 
     def parse_song_info(self, info):
-        sub_url = None
-        subs = info.get('subtitles', {})
-        auto_subs = info.get('automatic_captions', {})
-        
-        for lang in ['ko', 'en', 'ja']:
-            if lang in subs:
-                for fmt in subs[lang]:
-                    if fmt.get('ext') == 'vtt':
-                        sub_url = fmt.get('url')
-                        break
-                if sub_url: break
-            if lang in auto_subs:
-                for fmt in auto_subs[lang]:
-                    if fmt.get('ext') == 'vtt':
-                        sub_url = fmt.get('url')
-                        break
-                if sub_url: break
-
         return {
+            'id': info.get('id'),
             'url': info['url'],
             'title': info['title'],
             'thumbnail': info.get('thumbnail'),
             'duration': info.get('duration'),
-            'webpage_url': info.get('webpage_url'),
-            'sub_url': sub_url
+            'webpage_url': info.get('webpage_url')
         }
 
     async def add_to_queue_or_play(self, ctx, song):
