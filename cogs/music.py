@@ -19,7 +19,10 @@ YDL_OPTIONS = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0'
+    'source_address': '0.0.0.0',
+    'writesubtitles': True,
+    'writeautomaticsub': True,
+    'subtitleslangs': ['ko', 'en']
 }
 
 # FFmpeg 옵션 설정
@@ -157,7 +160,7 @@ class Music(commands.Cog):
     def cog_unload(self):
         self.update_controller.cancel()
 
-    @tasks.loop(seconds=5)
+    @tasks.loop(seconds=3)
     async def update_controller(self):
         for guild_id, msg in list(self.last_controller_msg.items()):
             if not self.is_playing.get(guild_id):
@@ -192,7 +195,8 @@ class Music(commands.Cog):
             current_sub = ""
             subs = self.subtitles.get(guild_id, [])
             for sub in subs:
-                if sub['start'] <= elapsed <= sub['end']:
+                # 여유 범위를 주어 컨트롤러 업데이트 주기 시점에 짧은 자막이 누락되지 않도록 보완
+                if sub['start'] - 1.0 <= elapsed <= sub['end'] + 2.0:
                     current_sub = sub['text']
                     break
                     
