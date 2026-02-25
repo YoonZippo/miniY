@@ -6,6 +6,9 @@ import logging.handlers
 from discord.ext import commands
 from dotenv import load_dotenv
 
+# 로그 디렉토리 자동 생성
+os.makedirs('logs', exist_ok=True)
+
 # 로깅 설정
 logger = logging.getLogger('musicBot')
 logger.setLevel(logging.INFO)
@@ -33,7 +36,7 @@ TOKEN = os.getenv('MUSIC_BOT_TOKEN') # 기존 봇과 다른 토큰 사용
 # 봇 설정
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!!', intents=intents)
+bot = commands.Bot(command_prefix='/', intents=intents)
 
 @bot.event
 async def setup_hook():
