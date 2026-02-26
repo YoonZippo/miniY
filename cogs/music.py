@@ -64,6 +64,78 @@ class MusicSearchView(discord.ui.View):
         except:
             pass
 
+class QueueView(discord.ui.View):
+    def __init__(self, cog, ctx):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.ctx = ctx
+
+    @discord.ui.button(label="🗑️ 삭제", style=discord.ButtonStyle.danger)
+    async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = interaction.guild_id
+        queue = self.cog.queue.get(guild_id, [])
+        if not queue:
+            return await interaction.response.edit_message(content="대기열이 비어 있습니다.", embed=None, view=None)
+            
+        view = QueueDeleteView(self.cog, self.ctx)
+        await interaction.response.edit_message(content="삭제할 곡의 번호를 선택하세요.", view=view)
+
+    @discord.ui.button(label="🔀 셔플", style=discord.ButtonStyle.primary)
+    async def shuffle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        import random
+        guild_id = interaction.guild_id
+        queue = self.cog.queue.get(guild_id, [])
+        if not queue:
+            return await interaction.response.edit_message(content="대기열이 비어 있습니다.", embed=None, view=None)
+            
+        random.shuffle(queue)
+        
+        embed = self.cog.get_queue_embed(guild_id)
+        await interaction.response.edit_message(content="🔀 대기열이 랜덤하게 섞였습니다!", embed=embed, view=self)
+
+class QueueDeleteView(discord.ui.View):
+    def __init__(self, cog, ctx):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.ctx = ctx
+        self.update_buttons()
+        
+    def update_buttons(self):
+        self.clear_items()
+        guild_id = self.ctx.guild.id
+        queue = self.cog.queue.get(guild_id, [])
+        
+        for i in range(min(10, len(queue))):
+            btn = discord.ui.Button(label=str(i+1), style=discord.ButtonStyle.danger, custom_id=f"del_{i}")
+            btn.callback = self.make_callback(i)
+            self.add_item(btn)
+            
+        back_btn = discord.ui.Button(label="뒤로가기", style=discord.ButtonStyle.secondary, custom_id="back")
+        back_btn.callback = self.back_callback
+        self.add_item(back_btn)
+        
+    def make_callback(self, index):
+        async def callback(interaction: discord.Interaction):
+            guild_id = interaction.guild_id
+            queue = self.cog.queue.get(guild_id, [])
+            if index < len(queue):
+                removed = queue.pop(index)
+                self.update_buttons()
+                embed = self.cog.get_queue_embed(guild_id)
+                if len(queue) == 0:
+                    await interaction.response.edit_message(content=f"🗑️ `{removed['title']}` 곡을 삭제했습니다. 대기열이 비어 있습니다.", embed=None, view=None)
+                else:
+                    await interaction.response.edit_message(content=f"🗑️ `{removed['title']}` 곡을 삭제했습니다.", embed=embed, view=self)
+            else:
+                await interaction.response.send_message("유효하지 않은 번호입니다.", ephemeral=True)
+        return callback
+
+    async def back_callback(self, interaction: discord.Interaction):
+        guild_id = interaction.guild_id
+        embed = self.cog.get_queue_embed(guild_id)
+        view = QueueView(self.cog, self.ctx)
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+
 class MusicPlayerView(discord.ui.View):
     """음악 컨트롤 버튼이 포함된 뷰"""
     def __init__(self, cog, ctx):
@@ -131,15 +203,9 @@ class MusicPlayerView(discord.ui.View):
         if not queue:
             return await interaction.response.send_message("대기열이 비어 있습니다.", ephemeral=True)
             
-        embed = discord.Embed(title="📋 현재 대기열", color=discord.Color.blue())
-        desc = ""
-        for i, song in enumerate(queue[:10], 1):
-            desc += f"{i}. {song['title']}\n"
-        if len(queue) > 10:
-            desc += f"...외 {len(queue)-10}곡"
-        
-        embed.description = desc
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed = self.cog.get_queue_embed(guild_id)
+        view = QueueView(self.cog, self.ctx)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 class Music(commands.Cog):
     def __init__(self, bot):
@@ -160,6 +226,22 @@ class Music(commands.Cog):
 
     def cog_unload(self):
         self.update_controller.cancel()
+
+    def get_queue_embed(self, guild_id):
+        queue = self.queue.get(guild_id, [])
+        embed = discord.Embed(title="📋 현재 대기열", color=discord.Color.blue())
+        if not queue:
+            embed.description = "대기열이 비어 있습니다."
+            return embed
+            
+        desc = ""
+        for i, song in enumerate(queue[:10], 1):
+            desc += f"{i}. {song['title']}\n"
+        if len(queue) > 10:
+            desc += f"...외 {len(queue)-10}곡"
+        
+        embed.description = desc
+        return embed
 
     @tasks.loop(seconds=2)
     async def update_controller(self):
