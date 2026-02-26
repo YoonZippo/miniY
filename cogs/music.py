@@ -441,34 +441,69 @@ class Music(commands.Cog):
         async with ctx.typing():
             # URL인지 검색어인지 확인
             if search.startswith("http"):
-                with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                    try:
-                        info = ydl.extract_info(search, download=False)
-                        if 'entries' in info: # 플레이리스트인 경우
-                            info = info['entries'][0]
+                url_options = YDL_OPTIONS.copy()
+                url_options['noplaylist'] = False
+                url_options['extract_flat'] = 'in_playlist' # 빠른 추출을 위해 (재생 직전에 다시 주소 파싱) -> wait, if extract_flat is used, play_music fails because 'url' is webpage_url not the actual stream URL. 
+                # Instead limit playlist size to prevent heavy blocking
+                url_options['extract_flat'] = False 
+                url_options['playlistend'] = 50 # 최대 50곡으로 제한
+                
+                def extract():
+                    with yt_dlp.YoutubeDL(url_options) as ydl:
+                        return ydl.extract_info(search, download=False)
+                        
+                try:
+                    info = await asyncio.to_thread(extract)
+                    if 'entries' in info: # 플레이리스트인 경우
+                        entries = [e for e in info['entries'] if e]
+                        if not entries:
+                            return await ctx.send("❌ 재생목록에서 곡을 찾을 수 없습니다.")
+                            
+                        songs = [self.parse_song_info(e) for e in entries]
+                        title = info.get('title', '재생목록')
+                        
+                        guild_id = ctx.guild.id
+                        if guild_id not in self.queue:
+                            self.queue[guild_id] = []
+                            
+                        if self.is_playing.get(guild_id):
+                            self.queue[guild_id].extend(songs)
+                            if guild_id in self.current_song:
+                                await self.send_controller_message(ctx, self.current_song[guild_id])
+                            await ctx.send(f"📂 **{title}**의 곡 **{len(songs)}개**가 대기열에 한꺼번에 추가되었습니다!", delete_after=10)
+                        else:
+                            first_song = songs.pop(0)
+                            self.queue[guild_id].extend(songs)
+                            await ctx.send(f"📂 **{title}**의 곡 **{len(songs)+1}개**가 대기열에 한꺼번에 추가되었습니다!", delete_after=10)
+                            await self.play_music(ctx, first_song)
+                    else:
                         song = self.parse_song_info(info)
                         await self.add_to_queue_or_play(ctx, song)
-                    except Exception as e:
-                        return await ctx.send(f"❌ 오류가 발생했습니다: {e}")
+                except Exception as e:
+                    return await ctx.send(f"❌ 오류가 발생했습니다: {e}")
             else:
                 # 최대 9개 검색 결과 추출
                 search_options = YDL_OPTIONS.copy()
                 search_options['noplaylist'] = True
-                with yt_dlp.YoutubeDL(search_options) as ydl:
-                    try:
-                        entries = ydl.extract_info(f"ytsearch9:{search}", download=False)['entries']
-                        if not entries:
-                            return await ctx.send("🔍 검색 결과가 없습니다.")
+                
+                def search_extract():
+                    with yt_dlp.YoutubeDL(search_options) as ydl:
+                        return ydl.extract_info(f"ytsearch9:{search}", download=False)['entries']
                         
-                        results = [self.parse_song_info(e) for e in entries]
-                        
-                        embed = discord.Embed(title=f"🔍 '{search}' 검색 결과", description="재생할 곡의 번호를 버튼으로 선택해 주세요.", color=discord.Color.blue())
-                        for i, res in enumerate(results, 1):
-                            embed.add_field(name=f"{i}. {res['title']}", value=f"시간: {self.format_duration(res['duration'])}", inline=False)
-                        
-                        await ctx.send(embed=embed, view=MusicSearchView(self, ctx, results))
-                    except Exception as e:
-                        return await ctx.send(f"❌ 검색 중 오류가 발생했습니다: {e}")
+                try:
+                    entries = await asyncio.to_thread(search_extract)
+                    if not entries:
+                        return await ctx.send("🔍 검색 결과가 없습니다.")
+                    
+                    results = [self.parse_song_info(e) for e in entries]
+                    
+                    embed = discord.Embed(title=f"🔍 '{search}' 검색 결과", description="재생할 곡의 번호를 버튼으로 선택해 주세요.", color=discord.Color.blue())
+                    for i, res in enumerate(results, 1):
+                        embed.add_field(name=f"{i}. {res['title']}", value=f"시간: {self.format_duration(res['duration'])}", inline=False)
+                    
+                    await ctx.send(embed=embed, view=MusicSearchView(self, ctx, results))
+                except Exception as e:
+                    return await ctx.send(f"❌ 검색 중 오류가 발생했습니다: {e}")
 
     @commands.hybrid_command(name="ㅇ", description="유튜브 검색 및 재생을 수행합니다.")
     async def play_alias_1(self, ctx, *, search: str): await self.play(ctx, search=search)
