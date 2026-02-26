@@ -541,5 +541,16 @@ class Music(commands.Cog):
         embed.description = desc
         await ctx.send(embed=embed)
 
+    @commands.hybrid_command(name="자막주기", aliases=["interval", "주기"], description="자막 및 재생바의 갱신 주기(1~10초)를 실시간으로 변경합니다.")
+    async def change_subtitle_interval(self, ctx, seconds: int):
+        if not (1 <= seconds <= 10):
+            return await ctx.send("❌ 갱신 주기는 1초에서 10초 사이로 설정해야 합니다.", ephemeral=True)
+            
+        self.update_controller.change_interval(seconds=seconds)
+        if not self.update_controller.is_running():
+            self.update_controller.start()
+            
+        await ctx.send(f"✅ 자막 및 진행바 갱신 주기를 **{seconds}초**로 변경했습니다!")
+
 async def setup(bot):
     await bot.add_cog(Music(bot))
