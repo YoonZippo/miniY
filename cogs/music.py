@@ -23,7 +23,10 @@ YDL_OPTIONS = {
     'writesubtitles': True,
     'writeautomaticsub': True,
     'subtitleslangs': ['ko', 'en', 'ja'],
-    'cookiesfrombrowser': ('chrome',) # 유튜브 봇 감지 회피용 쿠키 우회
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    },
+    'extractor_args': {'youtube': ['player_client=android', 'player_skip=webpage']}
 }
 
 # FFmpeg 옵션 설정
