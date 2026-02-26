@@ -1,5 +1,6 @@
 import discord
 import asyncio
+import os
 import yt_dlp
 import logging
 import time
@@ -28,6 +29,9 @@ YDL_OPTIONS = {
     },
     'extractor_args': {'youtube': ['player_client=android', 'player_skip=webpage']}
 }
+
+if os.path.exists('cookies.txt'):
+    YDL_OPTIONS['cookiefile'] = 'cookies.txt'
 
 # FFmpeg 옵션 설정
 FFMPEG_OPTIONS = {
