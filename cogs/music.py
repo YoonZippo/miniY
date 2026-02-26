@@ -22,7 +22,8 @@ YDL_OPTIONS = {
     'source_address': '0.0.0.0',
     'writesubtitles': True,
     'writeautomaticsub': True,
-    'subtitleslangs': ['ko', 'en', 'ja']
+    'subtitleslangs': ['ko', 'en', 'ja'],
+    'cookiesfrombrowser': ('chrome',) # 유튜브 봇 감지 회피용 쿠키 우회
 }
 
 # FFmpeg 옵션 설정
