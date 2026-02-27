@@ -33,7 +33,8 @@ YDL_OPTIONS = {
             'player_skip=webpage,configs,js',
             'comment_sort=top'
         ]
-    }
+    },
+    'age_limit': 21
 }
 
 if os.path.exists('cookies.txt'):
