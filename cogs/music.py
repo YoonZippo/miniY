@@ -29,7 +29,7 @@ YDL_OPTIONS = {
     },
     'extractor_args': {
         'youtube': [
-            'player_client=android,ios,web',
+            'player_client=default',
             'player_skip=webpage,configs,js',
             'comment_sort=top'
         ]
