@@ -28,11 +28,9 @@ YDL_OPTIONS = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     },
     'extractor_args': {
-        'youtube': [
-            'player_client=default',
-            'player_skip=webpage,configs,js',
-            'comment_sort=top'
-        ]
+        'youtube': {
+            'player_client': ['web_creator', 'web', 'mweb'],
+        }
     },
     'age_limit': 21
 }
