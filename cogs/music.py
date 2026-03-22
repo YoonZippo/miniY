@@ -12,7 +12,7 @@ logger = logging.getLogger('musicBot.music')
 
 # yt-dlp 옵션 설정
 YDL_OPTIONS = {
-    'format': 'bestaudio*/best',
+    'format': 'bestaudio/best',
     'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
@@ -29,7 +29,7 @@ YDL_OPTIONS = {
     },
     'extractor_args': {
         'youtube': {
-            'player_client': ['default'],
+            'player_client': ['android', 'ios', 'tv', 'web'],
         }
     },
     'age_limit': 21

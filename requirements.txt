@@ -1,5 +1,5 @@
-discord.py
+discord.py[voice]>=2.4.0
 yt-dlp[default] @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
-PyNaCl
+PyNaCl>=1.5.0
 python-dotenv
 youtube-transcript-api
